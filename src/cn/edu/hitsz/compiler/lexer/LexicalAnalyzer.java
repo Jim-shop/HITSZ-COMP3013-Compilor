@@ -4,10 +4,13 @@ import cn.edu.hitsz.compiler.NotImplementedException;
 import cn.edu.hitsz.compiler.symtab.SymbolTable;
 import cn.edu.hitsz.compiler.utils.FileUtils;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
 /**
- * TODO: 实验一: 实现词法分析
+ * 实验一: 实现词法分析
  * <br>
  * 你可能需要参考的框架代码如下:
  *
@@ -16,11 +19,12 @@ import java.util.stream.StreamSupport;
  */
 public class LexicalAnalyzer {
     private final SymbolTable symbolTable;
+    private final List<Token> tokens = new ArrayList<>();
+    private List<Integer> fileContent;
 
     public LexicalAnalyzer(SymbolTable symbolTable) {
         this.symbolTable = symbolTable;
     }
-
 
     /**
      * 从给予的路径中读取并加载文件内容
@@ -28,10 +32,9 @@ public class LexicalAnalyzer {
      * @param path 路径
      */
     public void loadFile(String path) {
-        // TODO: 词法分析前的缓冲区实现
-        // 可自由实现各类缓冲区
-        // 或直接采用完整读入方法
-        throw new NotImplementedException();
+        // 词法分析前的缓冲区实现
+        this.fileContent = FileUtils.readFile(path).codePoints().boxed().collect(Collectors.toList());
+        this.fileContent.add(-1); // eof
     }
 
     /**
@@ -39,8 +42,78 @@ public class LexicalAnalyzer {
      * 需要维护实验一所需的符号表条目, 而得在语法分析中才能确定的符号表条目的成员可以先设置为 null
      */
     public void run() {
-        // TODO: 自动机实现的词法分析过程
-        throw new NotImplementedException();
+        // 自动机实现的词法分析过程
+        enum State {
+            START, ID, INT_CONST
+        }
+        State state = State.START;
+        StringBuilder stringBuilder = new StringBuilder();
+        for (int pos = 0; pos < fileContent.size(); ) {
+            int c = fileContent.get(pos);
+            switch (state) {
+                case START -> {
+                    stringBuilder.setLength(0);
+                    if (Character.isLetter(c) || c == '_') {
+                        stringBuilder.appendCodePoint(c);
+                        state = State.ID;
+                    } else if (Character.isDigit(c)) {
+                        stringBuilder.appendCodePoint(c);
+                        state = State.INT_CONST;
+                    } else if (c == '=') {
+                        tokens.add(Token.simple("="));
+                    } else if (c == ',') {
+                        tokens.add(Token.simple(","));
+                    } else if (c == ';') {
+                        tokens.add(Token.simple("Semicolon"));
+                    } else if (c == '+') {
+                        tokens.add(Token.simple("+"));
+                    } else if (c == '-') {
+                        tokens.add(Token.simple("-"));
+                    } else if (c == '*') {
+                        tokens.add(Token.simple("*"));
+                    } else if (c == '/') {
+                        tokens.add(Token.simple("/"));
+                    } else if (c == '(') {
+                        tokens.add(Token.simple("("));
+                    } else if (c == ')') {
+                        tokens.add(Token.simple(")"));
+                    } else if (c == -1) {
+                        tokens.add(Token.eof());
+                    } else if (!Character.isWhitespace(c)) { // unexpected character
+                        System.out.println("pos: " + pos + " char: " + c);
+                        throw new NotImplementedException();
+                    }
+                    pos++;
+                }
+                case ID -> {
+                    if (Character.isLetterOrDigit(c)) {
+                        stringBuilder.appendCodePoint(c);
+                        pos++;
+                    } else {
+                        String id = stringBuilder.toString();
+                        if (TokenKind.isAllowed(id)) {
+                            tokens.add(Token.simple(id));
+                        } else {
+                            tokens.add(Token.normal("id", id));
+                            if (!symbolTable.has(id)) {
+                                symbolTable.add(id);
+                            }
+                        }
+                        state = State.START;
+                    }
+                }
+                case INT_CONST -> {
+                    if (Character.isDigit(c)) {
+                        stringBuilder.appendCodePoint(c);
+                        pos++;
+                    } else {
+                        String digit = stringBuilder.toString();
+                        tokens.add(Token.normal("IntConst", digit));
+                        state = State.START;
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -49,18 +122,12 @@ public class LexicalAnalyzer {
      * @return Token 列表
      */
     public Iterable<Token> getTokens() {
-        // TODO: 从词法分析过程中获取 Token 列表
-        // 词法分析过程可以使用 Stream 或 Iterator 实现按需分析
-        // 亦可以直接分析完整个文件
-        // 总之实现过程能转化为一列表即可
-        throw new NotImplementedException();
+        // 从词法分析过程中获取 Token 列表
+        return tokens;
     }
 
     public void dumpTokens(String path) {
-        FileUtils.writeLines(
-            path,
-            StreamSupport.stream(getTokens().spliterator(), false).map(Token::toString).toList()
-        );
+        FileUtils.writeLines(path, StreamSupport.stream(getTokens().spliterator(), false).map(Token::toString).toList());
     }
 
 
