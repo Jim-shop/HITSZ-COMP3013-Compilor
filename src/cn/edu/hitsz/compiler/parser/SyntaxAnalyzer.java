@@ -1,16 +1,14 @@
 package cn.edu.hitsz.compiler.parser;
 
-import cn.edu.hitsz.compiler.NotImplementedException;
 import cn.edu.hitsz.compiler.lexer.Token;
 import cn.edu.hitsz.compiler.parser.table.LRTable;
 import cn.edu.hitsz.compiler.parser.table.Production;
 import cn.edu.hitsz.compiler.parser.table.Status;
 import cn.edu.hitsz.compiler.symtab.SymbolTable;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
-//TODO: 实验二: 实现 LR 语法分析驱动程序
+// 实验二: 实现 LR 语法分析驱动程序
 
 /**
  * LR 语法分析驱动程序
@@ -23,6 +21,11 @@ import java.util.List;
 public class SyntaxAnalyzer {
     private final SymbolTable symbolTable;
     private final List<ActionObserver> observers = new ArrayList<>();
+
+    private final Queue<Token> tokens = new LinkedList<>();
+    private final Stack<Symbol> symbols = new Stack<>();
+    private final Stack<Status> statuses = new Stack<>();
+    private LRTable lrTable;
 
 
     public SyntaxAnalyzer(SymbolTable symbolTable) {
@@ -75,25 +78,66 @@ public class SyntaxAnalyzer {
     }
 
     public void loadTokens(Iterable<Token> tokens) {
-        // TODO: 加载词法单元
+        // 加载词法单元
         // 你可以自行选择要如何存储词法单元, 譬如使用迭代器, 或是栈, 或是干脆使用一个 list 全存起来
         // 需要注意的是, 在实现驱动程序的过程中, 你会需要面对只读取一个 token 而不能消耗它的情况,
         // 在自行设计的时候请加以考虑此种情况
-        throw new NotImplementedException();
+        for (final var token : tokens) {
+            this.tokens.add(token);
+        }
     }
 
     public void loadLRTable(LRTable table) {
-        // TODO: 加载 LR 分析表
+        // 加载 LR 分析表
         // 你可以自行选择要如何使用该表格:
         // 是直接对 LRTable 调用 getAction/getGoto, 抑或是直接将 initStatus 存起来使用
-        throw new NotImplementedException();
+        this.lrTable = table;
+        symbols.clear();
+        symbols.push(new Symbol(Token.eof()));
+        statuses.clear();
+        statuses.push(lrTable.getInit());
     }
 
     public void run() {
-        // TODO: 实现驱动程序
+        // 实现驱动程序
         // 你需要根据上面的输入来实现 LR 语法分析的驱动程序
         // 请分别在遇到 Shift, Reduce, Accept 的时候调用上面的 callWhenInShift, callWhenInReduce, callWhenInAccept
         // 否则用于为实验二打分的产生式输出可能不会正常工作
-        throw new NotImplementedException();
+        while (!tokens.isEmpty()) {
+            var token = tokens.peek();
+            var status = statuses.peek();
+            var action = lrTable.getAction(status, token);
+            switch (action.getKind()) {
+                case Shift -> {
+                    final var shiftTo = action.getStatus();
+                    callWhenInShift(status, token);
+                    statuses.push(shiftTo);
+                    symbols.push(new Symbol(token));
+                    tokens.poll();
+                }
+
+                case Reduce -> {
+                    final var production = action.getProduction();
+                    callWhenInReduce(status, production);
+                    for (int i = 0; i < production.body().size(); i++) {
+                        statuses.pop();
+                        symbols.pop();
+                    }
+                    status = statuses.peek();
+                    final var head = production.head();
+                    statuses.push(lrTable.getGoto(status, head));
+                    symbols.push(new Symbol(head));
+                }
+
+                case Accept -> {
+                    callWhenInAccept(status);
+                    tokens.clear();
+                }
+
+                case Error -> {
+                    tokens.clear();
+                }
+            }
+        }
     }
 }
