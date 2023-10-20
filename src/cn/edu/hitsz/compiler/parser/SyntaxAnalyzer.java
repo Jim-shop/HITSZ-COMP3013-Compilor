@@ -135,7 +135,8 @@ public class SyntaxAnalyzer {
                 }
 
                 case Error -> {
-                    tokens.clear();
+                    throw new RuntimeException("Syntax analyzer finds error...");
+//                    tokens.clear();
                 }
             }
         }

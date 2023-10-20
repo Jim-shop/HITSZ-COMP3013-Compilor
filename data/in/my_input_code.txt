@@ -1,0 +1,4 @@
+int result, a = 8, b = 5, c = 3 - a;;
+int _negresult = -(result = 114514);
+result = a * b - (3 + b) * (c - a);
+return a = result = 123, 1, b;;;
