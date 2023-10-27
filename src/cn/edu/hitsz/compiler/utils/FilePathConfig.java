@@ -8,7 +8,7 @@ public final class FilePathConfig {
     /**
      * 输入的待编译的源代码
      */
-    public static final String SRC_CODE_PATH = "data/in/my_input_code.txt";
+    public static final String SRC_CODE_PATH = "data/in/input_code.txt";
 
     /**
      * 编码表
@@ -18,7 +18,7 @@ public final class FilePathConfig {
     /**
      * 语法文件
      */
-    public final static String GRAMMAR_PATH = "data/in/my_grammar.txt";
+    public final static String GRAMMAR_PATH = "data/in/grammar.txt";
 
     /**
      * 第三方工具构造的 LR 分析表

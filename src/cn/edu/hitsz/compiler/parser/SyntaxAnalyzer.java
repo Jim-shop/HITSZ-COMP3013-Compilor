@@ -23,8 +23,7 @@ public class SyntaxAnalyzer {
     private final List<ActionObserver> observers = new ArrayList<>();
 
     private final Queue<Token> tokens = new LinkedList<>();
-    private final Stack<Symbol> symbols = new Stack<>();
-    private final Stack<Status> statuses = new Stack<>();
+    private final Stack<Status> statusStack = new Stack<>();
     private LRTable lrTable;
 
 
@@ -92,10 +91,8 @@ public class SyntaxAnalyzer {
         // 你可以自行选择要如何使用该表格:
         // 是直接对 LRTable 调用 getAction/getGoto, 抑或是直接将 initStatus 存起来使用
         this.lrTable = table;
-        symbols.clear();
-        symbols.push(new Symbol(Token.eof()));
-        statuses.clear();
-        statuses.push(lrTable.getInit());
+        statusStack.clear();
+        statusStack.push(lrTable.getInit());
     }
 
     public void run() {
@@ -105,14 +102,13 @@ public class SyntaxAnalyzer {
         // 否则用于为实验二打分的产生式输出可能不会正常工作
         while (!tokens.isEmpty()) {
             var token = tokens.peek();
-            var status = statuses.peek();
+            var status = statusStack.peek();
             var action = lrTable.getAction(status, token);
             switch (action.getKind()) {
                 case Shift -> {
                     final var shiftTo = action.getStatus();
                     callWhenInShift(status, token);
-                    statuses.push(shiftTo);
-                    symbols.push(new Symbol(token));
+                    statusStack.push(shiftTo);
                     tokens.poll();
                 }
 
@@ -120,13 +116,11 @@ public class SyntaxAnalyzer {
                     final var production = action.getProduction();
                     callWhenInReduce(status, production);
                     for (int i = 0; i < production.body().size(); i++) {
-                        statuses.pop();
-                        symbols.pop();
+                        statusStack.pop();
                     }
-                    status = statuses.peek();
+                    final var newStatus = statusStack.peek();
                     final var head = production.head();
-                    statuses.push(lrTable.getGoto(status, head));
-                    symbols.push(new Symbol(head));
+                    statusStack.push(lrTable.getGoto(newStatus, head));
                 }
 
                 case Accept -> {
@@ -136,7 +130,6 @@ public class SyntaxAnalyzer {
 
                 case Error -> {
                     throw new RuntimeException("Syntax analyzer finds error...");
-//                    tokens.clear();
                 }
             }
         }
