@@ -1,63 +1,101 @@
 package cn.edu.hitsz.compiler.asm;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import cn.edu.hitsz.compiler.ir.IRVariable;
+
+import java.util.*;
 
 public class RegManager {
+    private final Map<IRVariable, VarAssignment> varAssignmentMap = new HashMap<>();
+    private final VarAssignment[] regMap = new VarAssignment[7];
+    private int stack_pointer = 0;
 
-    private final Map<String, VarAssignment> varAssignmentMap = new HashMap<>();
-    private final List<VarAssignment> regMap = new ArrayList<>(7);
-    private final Map<String, TargetInfo> targetInfo = new HashMap<>();
-    RegTable regTable = new RegTable();
-
-    public VarAssignment acquire1(String targetName) {
-        VarAssignment varAssignment = varAssignmentMap.get(targetName);
-        if (varAssignment != null) {
-            return varAssignment;
-        } // TODO
-        return varAssignment;
+    private int countFreeReg(VarAssignment[] regMap) {
+        return Arrays.stream(regMap).mapToInt(e -> e == null ? 1 : 0).sum();
     }
 
-    public String acquire(String targetName) {
-
-        TargetInfo assignment = targetInfo.get(targetName);
-        if (assignment != null) {
-            return "t%d".formatted(assignment.regLoc);
-        } else {
-            if (regTable.isFull()) {
-                int newAssignment = regTable.replace();
-            } else {
-                TargetInfo newAssignment = new TargetInfo(regTable.acquire());
-                targetInfo.put(targetName, newAssignment);
-                return "t%d".formatted(newAssignment.regLoc);
+    private int getFreeRegIdx(VarAssignment[] regMap) {
+        for (int i = 0; i < regMap.length; i++) {
+            if (regMap[i] == null) {
+                return i;
             }
-
-            // no free register
-            throw new RuntimeException("寄存器未分配");
         }
+        throw new RuntimeException("没有空闲寄存器");
     }
 
-    public void release(String targetName) {
-        TargetInfo assignment = targetInfo.get(targetName);
-        int id = assignment.regLoc;
-        if (regTable.regLRU[id] == 0) {
-            throw new RuntimeException("释放未分配的寄存器");
+    private int findBestRetiree(VarAssignment[] regMap) {
+        int maxLru = 0, maxIdx = 0;
+        for (int i = 0; i < regMap.length; i++) {
+            if (regMap[i] != null) {
+                if (regMap[i].reg.lru > maxLru) {
+                    maxLru = regMap[i].reg.lru;
+                    maxIdx = i;
+                }
+            }
         }
-        regTable.release(id);
+        return maxIdx;
+    }
+
+    public AllocReturn alloc(IRVariable variable) {
+        List<String> appendingAsm = new ArrayList<>();
+        VarAssignment varAssignment = varAssignmentMap.get(variable);
+        // if currently at reg, just return
+        if (varAssignment != null && !varAssignment.storeAtMem) {
+            return new AllocReturn(appendingAsm, varAssignment.reg.loc);
+        }
+        // else we should find a place to alloc
+        int freeRegCount = countFreeReg(regMap);
+        if (freeRegCount == 0) {
+            // if not using mem before and reg usage reach limit: transfer reg to mem
+            int idx = findBestRetiree(regMap);
+            VarAssignment bestRetiree = regMap[idx];
+            bestRetiree.storeAtMem = true;
+            bestRetiree.mem.loc = stack_pointer;
+            appendingAsm.add("SW t%d, %d(x0)".formatted(bestRetiree.reg.loc, stack_pointer));
+            stack_pointer += 4;
+            regMap[idx] = null;
+        }
+        int idx = getFreeRegIdx(regMap);
+        // var is not at reg, so it is either new or at mem
+        if (varAssignment != null && varAssignment.storeAtMem) {
+            appendingAsm.add("LW t%d, %d(x0)".formatted(idx, varAssignment.mem.loc));
+        }
+        if (varAssignment == null) {
+            varAssignment = new VarAssignment();
+            varAssignmentMap.put(variable, varAssignment);
+        }
+        varAssignment.storeAtMem = false;
+        varAssignment.reg.lru = 0;
+        varAssignment.reg.loc = idx;
+        // update lru and we should go
+        for (VarAssignment assignment : regMap) {
+            if (assignment != null) {
+                assignment.reg.lru++;
+            }
+        }
+        regMap[idx] = varAssignment;
+        return new AllocReturn(appendingAsm, varAssignment.reg.loc);
+    }
+
+    public void free(IRVariable variable) {
+        VarAssignment varAssignment = varAssignmentMap.get(variable);
+        assert varAssignment.storeAtMem;
+        regMap[varAssignment.reg.loc] = null;
+    }
+
+    public static class AllocReturn {
+        public List<String> appendingAsm;
+        public String regName;
+
+        public AllocReturn(List<String> appendingAsm, int regId) {
+            this.appendingAsm = appendingAsm;
+            this.regName = "t%d".formatted(regId);
+        }
     }
 
     public static class VarAssignment {
         public boolean storeAtMem;
         public Mem mem = new Mem();
         public Reg reg = new Reg();
-
-        public VarAssignment(int regLoc) {
-            this.storeAtMem = false;
-            this.reg.loc = regLoc;
-            this.reg.lru = 1;
-        }
 
         public static class Mem {
             public int loc;
@@ -69,81 +107,4 @@ public class RegManager {
         }
     }
 
-    private static class RegTable {
-        /**
-         * t0 ~ t6 的寄存器
-         * LRU 越大代表越老。
-         * LRU == 0 代表未分配。
-         */
-        private final int[] regLRU = new int[]{0, 0, 0, 0, 0, 0, 0};
-
-        public boolean isFull() {
-            for (int lruVal : regLRU) {
-                if (lruVal == 0) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        public int acquire() {
-            // find free reg
-            int result = regLRU.length;
-            for (int i = 0; i < regLRU.length; i++) {
-                if (regLRU[i] == 0) {
-                    result = i;
-                    break;
-                }
-            }
-            if (result == regLRU.length) {
-                throw new RuntimeException("没有寄存器可分配");
-            }
-            // update LRU
-            for (int i = 0; i < regLRU.length; i++) {
-                if (regLRU[i] != 0) {
-                    regLRU[i]++;
-                }
-            }
-            regLRU[result] = 1;
-            return result;
-        }
-
-        public void release(int idx) {
-            regLRU[idx] = 0;
-        }
-
-        public int replace() {
-            // find biggest LRU
-            int result = regLRU.length;
-            int max = 0;
-            for (int i = 0; i < regLRU.length; i++) {
-                if (regLRU[i] > max) {
-                    result = i;
-                    max = regLRU[i];
-                }
-            }
-            if (result == regLRU.length) {
-                throw new RuntimeException("好奇妙");
-            }
-            // update LRU
-            for (int i = 0; i < regLRU.length; i++) {
-                if (regLRU[i] != 0) {
-                    regLRU[i]++;
-                }
-            }
-            regLRU[result] = 1;
-            return result;
-        }
-    }
-
-    private static class TargetInfo {
-        public boolean storeAtMem;
-        public int memLoc, regLoc;
-
-        public TargetInfo(int regLoc) {
-            this.storeAtMem = false;
-            this.memLoc = 0;
-            this.regLoc = regLoc;
-        }
-    }
 }

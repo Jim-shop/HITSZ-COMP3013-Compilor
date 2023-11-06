@@ -27,7 +27,7 @@ import java.util.Map;
 public class AssemblyGenerator {
     List<String> asm = new ArrayList<>();
     private List<Instruction> irTable;
-    private HashMap<String, VarUsageInfo> varUsageInfo;
+    private HashMap<IRVariable, VarUsageInfo> varUsageInfo;
 
     /**
      * 加载前端提供的中间代码
@@ -126,57 +126,57 @@ public class AssemblyGenerator {
         return result;
     }
 
-    private HashMap<String, VarUsageInfo> getVarUsageInfo(List<Instruction> instructions) {
-        HashMap<String, VarUsageInfo> varUsageInfo = new HashMap<>();
+    private HashMap<IRVariable, VarUsageInfo> getVarUsageInfo(List<Instruction> instructions) {
+        HashMap<IRVariable, VarUsageInfo> varUsageInfo = new HashMap<>();
         for (int i = 0; i < instructions.size(); i++) {
             Instruction instruction = instructions.get(i);
             switch (instruction.getKind()) {
                 case MOV -> {
                     // update target usage info
-                    String targetName = instruction.getResult().getName();
-                    VarUsageInfo targetInfo = varUsageInfo.get(targetName);
+                    IRVariable target = instruction.getResult();
+                    VarUsageInfo targetInfo = varUsageInfo.get(target);
                     if (targetInfo != null) {
                         targetInfo.end = i;
                     } else {
-                        varUsageInfo.put(targetName, new VarUsageInfo(i, i));
+                        varUsageInfo.put(target, new VarUsageInfo(i, i));
                     }
                     // update source usage info
                     IRValue from = instruction.getFrom();
                     if (from.isIRVariable()) {
-                        String sourceName = ((IRVariable) from).getName();
-                        VarUsageInfo sourceInfo = varUsageInfo.get(sourceName);
+                        IRVariable source = (IRVariable) from;
+                        VarUsageInfo sourceInfo = varUsageInfo.get(source);
                         if (sourceInfo == null) {
-                            throw new RuntimeException("使用未初始化的变量%s".formatted(sourceName));
+                            throw new RuntimeException("使用未初始化的变量%s".formatted(source));
                         }
                         sourceInfo.end = i;
                     }
                 }
                 case ADD, SUB, MUL -> {
                     // update target usage info
-                    String targetName = instruction.getResult().getName();
-                    VarUsageInfo targetInfo = varUsageInfo.get(targetName);
+                    IRVariable target = instruction.getResult();
+                    VarUsageInfo targetInfo = varUsageInfo.get(target);
                     if (targetInfo != null) {
                         targetInfo.end = i;
                     } else {
-                        varUsageInfo.put(targetName, new VarUsageInfo(i, i));
+                        varUsageInfo.put(target, new VarUsageInfo(i, i));
                     }
                     // update lhs usage info
                     IRValue lhs = instruction.getLHS();
                     if (lhs.isIRVariable()) {
-                        String lhsName = ((IRVariable) lhs).getName();
-                        VarUsageInfo lhsInfo = varUsageInfo.get(lhsName);
+                        IRVariable lhsV = (IRVariable) lhs;
+                        VarUsageInfo lhsInfo = varUsageInfo.get(lhsV);
                         if (lhsInfo == null) {
-                            throw new RuntimeException("使用未初始化的变量%s".formatted(lhsName));
+                            throw new RuntimeException("使用未初始化的变量%s".formatted(lhsV));
                         }
                         lhsInfo.end = i;
                     }
                     // update rhs usage info
                     IRValue rhs = instruction.getRHS();
                     if (rhs.isIRVariable()) {
-                        String rhsName = ((IRVariable) rhs).getName();
-                        VarUsageInfo rhsInfo = varUsageInfo.get(rhsName);
+                        IRVariable rhsV = (IRVariable) rhs;
+                        VarUsageInfo rhsInfo = varUsageInfo.get(rhsV);
                         if (rhsInfo == null) {
-                            throw new RuntimeException("使用未初始化的变量%s".formatted(rhsName));
+                            throw new RuntimeException("使用未初始化的变量%s".formatted(rhsV));
                         }
                         rhsInfo.end = i;
                     }
@@ -185,10 +185,10 @@ public class AssemblyGenerator {
                     // update target usage info
                     IRValue ret = instruction.getReturnValue();
                     if (ret.isIRVariable()) {
-                        String retName = ((IRVariable) ret).getName();
-                        VarUsageInfo retInfo = varUsageInfo.get(retName);
+                        IRVariable retV = (IRVariable) ret;
+                        VarUsageInfo retInfo = varUsageInfo.get(retV);
                         if (retInfo == null) {
-                            throw new RuntimeException("使用未初始化的变量%s".formatted(retName));
+                            throw new RuntimeException("使用未初始化的变量%s".formatted(retV));
                         }
                         retInfo.end = i;
                     }
@@ -215,46 +215,54 @@ public class AssemblyGenerator {
             switch (instruction.getKind()) {
                 case MOV -> {
                     // assign target register
-                    String targetName = instruction.getResult().getName();
-                    String targetAssignment = regManager.acquire(targetName);
+                    RegManager.AllocReturn targetAlloc = regManager.alloc(instruction.getResult());
+                    asm.addAll(targetAlloc.appendingAsm);
+                    String targetAssignment = targetAlloc.regName;
                     // instruction emit
                     IRValue source = instruction.getFrom();
                     if (source.isImmediate()) {
                         asm.add("LI %s, %d".formatted(targetAssignment, ((IRImmediate) source).getValue()));
                     } else {
-                        String sourceName = ((IRVariable) source).getName();
-                        VarUsageInfo sourceInfo = varUsageInfo.get(sourceName);
-                        String sourceAssignment = regManager.acquire(sourceName);
+                        IRVariable sourceV = ((IRVariable) source);
+                        VarUsageInfo sourceInfo = varUsageInfo.get(sourceV);
+                        RegManager.AllocReturn sourceAlloc = regManager.alloc(sourceV);
+                        asm.addAll(sourceAlloc.appendingAsm);
+                        String sourceAssignment = sourceAlloc.regName;
                         asm.add("MV %s, %s".formatted(targetAssignment, sourceAssignment));
                         // clear assignment
                         if (sourceInfo.end == i) {
-                            regManager.release(sourceName);
+                            regManager.free(sourceV);
                         }
                     }
                 }
                 case ADD, SUB, MUL -> {
                     // assign target register
-                    String targetName = instruction.getResult().getName();
-                    String targetAssignment = regManager.acquire(targetName);
+                    IRVariable target = instruction.getResult();
+                    RegManager.AllocReturn targetAlloc = regManager.alloc(target);
+                    asm.addAll(targetAlloc.appendingAsm);
+                    String targetAssignment = targetAlloc.regName;
                     // instruction emit
                     assert instruction.getLHS().isIRVariable();
                     IRVariable lhs = (IRVariable) instruction.getLHS();
                     IRValue rhs = instruction.getRHS();
-                    VarUsageInfo lhsInfo = varUsageInfo.get(lhs.getName());
-                    String lhsAssignment = regManager.acquire(lhs.getName());
+                    VarUsageInfo lhsInfo = varUsageInfo.get(lhs);
+                    RegManager.AllocReturn lhsAlloc = regManager.alloc(lhs);
+                    asm.addAll(lhsAlloc.appendingAsm);
+                    String lhsAssignment = lhsAlloc.regName;
                     if (rhs.isImmediate()) {
+                        int rhsVal = ((IRImmediate) rhs).getValue();
                         asm.add(switch (instruction.getKind()) {
-                            case ADD ->
-                                    "ADDI %s, %s, %d".formatted(targetAssignment, lhsAssignment, ((IRImmediate) rhs).getValue());
-                            case SUB ->
-                                    "SUBI %s, %s, %d".formatted(targetAssignment, lhsAssignment, ((IRImmediate) rhs).getValue());
+                            case ADD -> "ADDI %s, %s, %d".formatted(targetAssignment, lhsAssignment, rhsVal);
+                            case SUB -> "SUBI %s, %s, %d".formatted(targetAssignment, lhsAssignment, rhsVal);
                             case MUL -> throw new NotImplementedException();
                             default -> throw new IllegalStateException("Unexpected value: " + instruction.getKind());
                         });
                     } else {
-                        String rhsName = ((IRVariable) rhs).getName();
-                        VarUsageInfo rhsInfo = varUsageInfo.get(rhsName);
-                        String rhsAssignment = regManager.acquire(rhsName);
+                        IRVariable rhsV = (IRVariable) rhs;
+                        VarUsageInfo rhsInfo = varUsageInfo.get(rhsV);
+                        RegManager.AllocReturn rhsAlloc = regManager.alloc(rhsV);
+                        asm.addAll(rhsAlloc.appendingAsm);
+                        String rhsAssignment = rhsAlloc.regName;
                         asm.add(switch (instruction.getKind()) {
                             case ADD -> "ADD %s, %s, %s".formatted(targetAssignment, lhsAssignment, rhsAssignment);
                             case SUB -> "SUB %s, %s, %s".formatted(targetAssignment, lhsAssignment, rhsAssignment);
@@ -263,11 +271,11 @@ public class AssemblyGenerator {
                         });
                         // clear assignment
                         if (rhsInfo.end == i) {
-                            regManager.release(rhsName);
+                            regManager.free(rhsV);
                         }
                     }
                     if (lhsInfo.end == i) {
-                        regManager.release(lhs.getName());
+                        regManager.free(lhs);
                     }
                 }
                 case RET -> {
@@ -275,11 +283,14 @@ public class AssemblyGenerator {
                     if (returnValue.isImmediate()) {
                         asm.add("LI a0, %d".formatted(((IRImmediate) returnValue).getValue()));
                     } else {
-                        String returnValueAssignment = regManager.acquire(((IRVariable) returnValue).getName());
+                        RegManager.AllocReturn retValAlloc = regManager.alloc((IRVariable) returnValue);
+                        asm.addAll(retValAlloc.appendingAsm);
+                        String returnValueAssignment = retValAlloc.regName;
                         asm.add("MV a0, %s".formatted(returnValueAssignment));
                     }
                 }
             }
+            //asm.add("# %s".formatted(instruction));
         }
     }
 
@@ -295,11 +306,6 @@ public class AssemblyGenerator {
 
     private static class VarUsageInfo {
         public int start, end;
-
-        public VarUsageInfo(int start) {
-            this.start = start;
-        }
-
         public VarUsageInfo(int start, int end) {
             this.start = start;
             this.end = end;
